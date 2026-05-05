@@ -1,0 +1,17 @@
+[project]
+name = "video-editor-bot"
+version = "1.0.0"
+description = "Pro Video Editor Telegram Bot — edit videos from Telegram"
+requires-python = ">=3.11"
+dependencies = [
+    "python-telegram-bot>=21.0",
+    "fastapi[standard]>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "requests>=2.28.0",
+    "imageio-ffmpeg>=0.4.9",
+    "yt-dlp>=2024.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
