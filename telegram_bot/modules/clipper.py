@@ -20,29 +20,57 @@ class Clip:
 
 
 def get_video_duration(video_path: str) -> float:
-    """Get video duration in seconds."""
+    """Get video duration in seconds. Uses ffprobe if available, falls back to ffmpeg."""
+    import shutil
+    if shutil.which("ffprobe"):
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, text=True,
+        )
+        try:
+            return float(result.stdout.strip())
+        except ValueError:
+            pass
+
+    # Fallback: parse duration from ffmpeg stderr
     result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-        capture_output=True, text=True,
+        ["ffmpeg", "-i", video_path, "-f", "null", "-"],
+        capture_output=True, text=True, timeout=60,
     )
-    try:
-        return float(result.stdout.strip())
-    except ValueError:
-        return 0.0
+    # Look for "Duration: HH:MM:SS.ms" in stderr
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", result.stderr)
+    if match:
+        h, m, s = float(match.group(1)), float(match.group(2)), float(match.group(3))
+        return h * 3600 + m * 60 + s
+    return 0.0
 
 
 def get_video_info(video_path: str) -> dict:
-    """Get video metadata."""
+    """Get video metadata. Uses ffprobe if available, falls back to ffmpeg."""
+    import shutil
+    if shutil.which("ffprobe"):
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_format", "-show_streams", video_path],
+            capture_output=True, text=True,
+        )
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback: extract basic info from ffmpeg stderr
     result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json",
-         "-show_format", "-show_streams", video_path],
+        ["ffmpeg", "-i", video_path],
         capture_output=True, text=True,
     )
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {}
+    info = {"format": {}, "streams": []}
+    duration_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", result.stderr)
+    if duration_match:
+        h, m, s = float(duration_match.group(1)), float(duration_match.group(2)), float(duration_match.group(3))
+        info["format"]["duration"] = str(h * 3600 + m * 60 + s)
+    return info
 
 
 def detect_scenes(video_path: str, threshold: float = 0.3) -> list[float]:

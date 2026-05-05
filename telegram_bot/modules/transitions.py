@@ -48,15 +48,8 @@ def add_transition_between(video1_path: str, video2_path: str, output_path: str,
         duration: Transition duration in seconds
     """
     # Get duration of first video to calculate offset
-    result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", video1_path],
-        capture_output=True, text=True,
-    )
-    try:
-        video1_duration = float(result.stdout.strip())
-    except ValueError:
-        video1_duration = 5.0
+    from modules.clipper import get_video_duration
+    video1_duration = get_video_duration(video1_path) or 5.0
 
     offset = max(0, video1_duration - duration)
 

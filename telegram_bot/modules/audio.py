@@ -27,15 +27,29 @@ SFX_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_audio_duration(audio_path: str) -> float:
     """Get duration of an audio file."""
+    import shutil
+    import re
+    if shutil.which("ffprobe"):
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+            capture_output=True, text=True,
+        )
+        try:
+            return float(result.stdout.strip())
+        except ValueError:
+            pass
+
+    # Fallback: use ffmpeg
     result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
-        capture_output=True, text=True,
+        ["ffmpeg", "-i", audio_path, "-f", "null", "-"],
+        capture_output=True, text=True, timeout=30,
     )
-    try:
-        return float(result.stdout.strip())
-    except ValueError:
-        return 0.0
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", result.stderr)
+    if match:
+        h, m, s = float(match.group(1)), float(match.group(2)), float(match.group(3))
+        return h * 3600 + m * 60 + s
+    return 0.0
 
 
 def list_music() -> list[AudioAsset]:
