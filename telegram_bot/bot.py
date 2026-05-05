@@ -25,6 +25,7 @@ import shutil
 from pathlib import Path
 
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -70,8 +71,8 @@ WORK_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def run_ffmpeg(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
-    """Run an ffmpeg command."""
-    cmd = ["ffmpeg", "-y"] + args
+    """Run an ffmpeg command with multi-threading enabled."""
+    cmd = ["ffmpeg", "-y", "-threads", "0"] + args
     logger.info(f"Running: {' '.join(cmd)}")
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
@@ -234,7 +235,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if not mime.startswith("video/"):
             return
 
-    await message.reply_text("📥 Downloading video...")
+    await message.chat.send_action(ChatAction.TYPING)
 
     file = await context.bot.get_file(video.file_id)
     file_ext = ".mp4"
@@ -368,11 +369,12 @@ async def execute_edit(message, context: ContextTypes.DEFAULT_TYPE,
     actions = parse_instruction(instruction)
     plan = describe_actions(actions)
 
-    # Show the plan
-    await message.reply_text(f"🎬 *Edit Plan:*\n{plan}\n\n⚙️ Processing...", parse_mode="Markdown")
+    # Show the plan immediately and send typing indicator
+    await message.reply_text(f"🎬 *Edit Plan:*\n{plan}\n\n⏳ Processing...", parse_mode="Markdown")
+    await message.chat.send_action(ChatAction.UPLOAD_VIDEO)
 
     try:
-        output_path = await process_actions(actions, video_path, context)
+        output_path = await process_actions(actions, video_path, context, message=message)
 
         if output_path and Path(output_path).exists():
             file_size = Path(output_path).stat().st_size
@@ -414,7 +416,8 @@ async def execute_edit(message, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def process_actions(actions: list[EditAction], video_path: str,
-                          context: ContextTypes.DEFAULT_TYPE) -> str | None:
+                          context: ContextTypes.DEFAULT_TYPE,
+                          message=None) -> str | None:
     """Execute a list of editing actions on a video."""
     current_path = video_path
     stem = Path(video_path).stem
@@ -635,12 +638,16 @@ async def process_actions(actions: list[EditAction], video_path: str,
                 )
 
         elif action.action == "remove_silence":
+            if message:
+                await message.chat.send_action(ChatAction.UPLOAD_VIDEO)
             output = str(WORK_DIR / f"{stem}_desilenced{ext}")
             remove_silence(current_path, output)
             current_path = output
             video_duration = get_video_duration(current_path)
 
         elif action.action == "add_transitions":
+            if message:
+                await message.chat.send_action(ChatAction.UPLOAD_VIDEO)
             # Transitions are applied during auto-edit or after silence removal
             # For standalone, we split on scenes and add transitions
             from modules.clipper import detect_scenes
@@ -719,8 +726,17 @@ async def process_actions(actions: list[EditAction], video_path: str,
 
         elif action.action == "auto_edit":
             config = parse_auto_edit_config(action.params.get("raw_text", ""))
+            # Use ultrafast preset for speed
+            config.preset = "ultrafast"
             output = str(WORK_DIR / f"{stem}_autoedit{ext}")
-            auto_edit(current_path, output, config=config)
+
+            # Progress callback to send typing + updates
+            async def _progress(step_num, total, msg):
+                if message:
+                    await message.chat.send_action(ChatAction.UPLOAD_VIDEO)
+
+            auto_edit(current_path, output, config=config,
+                      progress_callback=_progress)
             current_path = output
             video_duration = get_video_duration(current_path)
 
@@ -745,7 +761,7 @@ async def process_actions(actions: list[EditAction], video_path: str,
         if audio_filters:
             cmd.extend(["-af", ",".join(audio_filters)])
 
-        cmd.extend(["-c:v", "libx264", "-preset", "fast", "-crf", "23"])
+        cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"])
         if not audio_filters:
             cmd.extend(["-c:a", "aac"])
         cmd.append(output)

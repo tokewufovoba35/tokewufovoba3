@@ -56,7 +56,7 @@ class EditConfig:
     platform: str = ""  # empty = keep original format
 
     # Quality
-    preset: str = "fast"
+    preset: str = "ultrafast"
     crf: int = 23
 
 
@@ -96,6 +96,14 @@ def auto_edit(video_path: str, output_path: str,
         nonlocal step
         step += 1
         logger.info(f"[Auto-Edit {step}/{total_steps}] {msg}")
+        if progress_callback:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(progress_callback(step, total_steps, msg))
+            except RuntimeError:
+                pass
 
     # Step 1: Remove silence
     if config.remove_silence:
@@ -123,7 +131,7 @@ def auto_edit(video_path: str, output_path: str,
             all_filters = [vf] + enhance_filters
 
             result = subprocess.run(
-                ["ffmpeg", "-y", "-i", current_path,
+                ["ffmpeg", "-y", "-threads", "0", "-i", current_path,
                  "-vf", ",".join(all_filters),
                  "-c:v", "libx264", "-preset", config.preset,
                  "-crf", str(config.crf),
@@ -199,7 +207,7 @@ def auto_edit(video_path: str, output_path: str,
                 platform_output = str(work_dir / f"{stem}_platform.mp4")
                 filters = build_platform_format(platform_settings)
                 result = subprocess.run(
-                    ["ffmpeg", "-y", "-i", current_path,
+                    ["ffmpeg", "-y", "-threads", "0", "-i", current_path,
                      "-vf", ",".join(filters),
                      "-c:v", "libx264", "-preset", config.preset,
                      "-c:a", "aac",

@@ -30,7 +30,7 @@ def detect_silence(video_path: str, threshold_db: float = -30.0,
         List of SilentSegment objects
     """
     result = subprocess.run(
-        ["ffmpeg", "-i", video_path, "-af",
+        ["ffmpeg", "-i", video_path, "-vn", "-af",
          f"silencedetect=noise={threshold_db}dB:d={min_duration}",
          "-f", "null", "-"],
         capture_output=True, text=True, timeout=120,
