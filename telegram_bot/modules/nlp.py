@@ -5,6 +5,7 @@ Parses user instructions into structured editing actions without external API ca
 
 import re
 from dataclasses import dataclass, field
+from modules.downloader import extract_urls
 
 
 @dataclass
@@ -252,6 +253,31 @@ def parse_instruction(text: str) -> list[EditAction]:
         query = query_match.group(1) if query_match else "generic"
         actions.append(EditAction("add_broll", {"query": query}))
 
+    # Detect URL-based video downloading
+    urls = extract_urls(text)
+    if urls:
+        actions.append(EditAction("download_and_merge", {
+            "urls": urls,
+            "raw_text": text,
+            "add_transitions": True,
+            "fix_glitches": True,
+        }))
+        # Check for music preferences in the same message
+        if any(w in text_lower for w in ["my music", "upload music", "i have music",
+                                          "my own music", "i'll upload"]):
+            actions.append(EditAction("ask_music", {"preference": "user_upload"}))
+        elif any(w in text_lower for w in ["add music", "background music", "music",
+                                            "with music", "put music"]):
+            actions.append(EditAction("smart_music", {}))
+        return actions  # URLs are the primary action, skip other parsing
+
+    # Detect smart music requests (auto-find suitable music)
+    if any(w in text_lower for w in ["find music", "suggest music", "auto music",
+                                      "pick music", "choose music",
+                                      "suitable music", "matching music",
+                                      "best music", "right music"]):
+        actions.append(EditAction("smart_music", {}))
+
     # Detect full auto-edit ("edit this", "full edit", "edit like a pro")
     if any(w in text_lower for w in ["full edit", "edit this", "edit it",
                                       "edit like a pro", "auto edit", "auto-edit",
@@ -333,4 +359,15 @@ def describe_actions(actions: list[EditAction]) -> str:
             descriptions.append(f"Insert B-roll: {action.params.get('query', '')}")
         elif action.action == "auto_edit":
             descriptions.append("Full auto-edit (silence removal → color → music → graphics)")
+        elif action.action == "download_and_merge":
+            url_count = len(action.params.get("urls", []))
+            descriptions.append(f"Download {url_count} clip(s) from URL(s)")
+            if action.params.get("fix_glitches"):
+                descriptions.append("Scan for AI glitches and fix them")
+            if action.params.get("add_transitions"):
+                descriptions.append("Merge clips with transitions")
+        elif action.action == "smart_music":
+            descriptions.append("Auto-select background music that suits the video")
+        elif action.action == "ask_music":
+            descriptions.append("Waiting for your music upload")
     return "\n".join(f"• {d}" for d in descriptions)

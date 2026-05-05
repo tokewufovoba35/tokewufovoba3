@@ -68,6 +68,9 @@ from modules.graphics import (
     add_end_screen, add_progress_bar,
 )
 from modules.auto_edit import auto_edit, parse_auto_edit_config, EditConfig
+from modules.downloader import extract_urls, download_video, download_multiple, merge_downloaded_clips
+from modules.slop_detector import detect_all_glitches, replace_glitch_segments
+from modules.smart_music import analyze_video_mood, add_smart_music
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -110,6 +113,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         '• _"Trim from 0:10 to 0:30 and add zoom"_\n'
         '• _"Make it moody with film grain"_\n'
         '• _"Speed up 2x with a warm filter"_\n\n'
+        "*🔗 Paste Video Links:*\n"
+        "• Paste URLs from video generator sites\n"
+        "• I'll download, merge, fix AI glitches, and add music\n\n"
         "*Music & SFX:*\n"
         "• Send audio files labeled `music:` or `sfx:` to build your library\n"
         '• Then say _"add background music"_ on any video\n\n'
@@ -165,8 +171,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "*🔧 Utilities:*\n"
         "• `compress` / `resize 720p` / `rotate 90`\n"
         "• `reverse` / `enhance`\n\n"
+        "*🔗 Video Links (NEW):*\n"
+        "• Paste video URLs — I'll download them automatically\n"
+        "• Multiple links = merge all clips with transitions\n"
+        "• Auto-detects and fixes AI glitches (frozen frames, artifacts)\n"
+        "• Works with most video sites (TikTok, YouTube, etc.)\n\n"
+        "*🎵 Smart Music (NEW):*\n"
+        "• `add music` — Uses your uploaded music OR auto-generates ambient\n"
+        "• `find music` — I'll analyze the video and pick something fitting\n"
+        "• Upload your own: send audio with caption `music: Song Name`\n\n"
         "*💡 Pro Tips:*\n"
         "• Just say `edit this` for a full professional edit!\n"
+        "• Paste multiple video links in one message to merge them\n"
         "• Combine: _\"remove silence, add transitions, cinematic color, for TikTok\"_\n"
         "• Upload music with caption `music: Song Name`\n"
         "• Upload SFX with caption `sfx: Whoosh`\n"
@@ -347,6 +363,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not text:
         return
 
+    # Check if the message contains URLs — these don't need a prior video
+    urls = extract_urls(text)
+    if urls:
+        await execute_edit(message, context, text, video_path=None)
+        return
+
     # Find the video to edit
     video_path = None
 
@@ -368,7 +390,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not video_path or not Path(video_path).exists():
         await message.reply_text(
             "Hey! Send me a video first and then tell me what you want done. "
-            "I can handle pretty much anything — just describe it naturally!"
+            "Or paste video links and I'll download, merge, and edit them for you!"
         )
         return
 
@@ -376,11 +398,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def execute_edit(message, context: ContextTypes.DEFAULT_TYPE,
-                       instruction: str, video_path: str) -> None:
+                       instruction: str, video_path: str | None) -> None:
     """Parse instruction and execute editing actions."""
     # Parse the instruction
     actions = parse_instruction(instruction)
     plan = describe_actions(actions)
+
+    # For URL-based actions, video_path is not needed upfront
+    has_download_action = any(a.action == "download_and_merge" for a in actions)
+
+    if not has_download_action and (not video_path or not Path(video_path).exists()):
+        await message.reply_text(
+            "Send me a video first, or paste video links so I can download them!"
+        )
+        return
 
     # Show the plan immediately and send typing indicator
     await message.reply_text(f"🎬 *Edit Plan:*\n{plan}\n\n⏳ Processing...", parse_mode="Markdown")
@@ -434,14 +465,14 @@ async def execute_edit(message, context: ContextTypes.DEFAULT_TYPE,
         )
 
 
-async def process_actions(actions: list[EditAction], video_path: str,
+async def process_actions(actions: list[EditAction], video_path: str | None,
                           context: ContextTypes.DEFAULT_TYPE,
                           message=None) -> str | None:
     """Execute a list of editing actions on a video."""
     current_path = video_path
-    stem = Path(video_path).stem
-    ext = Path(video_path).suffix
-    video_duration = get_video_duration(video_path)
+    stem = Path(video_path).stem if video_path else "merged"
+    ext = Path(video_path).suffix if video_path else ".mp4"
+    video_duration = get_video_duration(video_path) if video_path else 0.0
 
     video_filters = []
     audio_filters = []
@@ -751,6 +782,126 @@ async def process_actions(actions: list[EditAction], video_path: str,
                     f"B-roll failed: {e}\n\n"
                     "Make sure PEXELS_API_KEY is set and `requests` is installed.\n"
                     "Get a free key at: https://www.pexels.com/api/"
+                )
+
+        elif action.action == "download_and_merge":
+            urls = action.params.get("urls", [])
+            if not urls:
+                raise ValueError("No URLs found in the message")
+
+            if message:
+                await message.reply_text(
+                    f"📥 Downloading {len(urls)} clip(s)...\n"
+                    "This may take a moment depending on the video sizes.",
+                )
+                await message.chat.send_action(ChatAction.UPLOAD_VIDEO)
+
+            # Download all clips
+            download_dir = str(WORK_DIR / "downloads")
+            clips = download_multiple(urls, output_dir=download_dir)
+
+            if not clips:
+                raise ValueError(
+                    "Couldn't download any videos from those links. "
+                    "Make sure the URLs are correct and the videos are publicly accessible."
+                )
+
+            if message:
+                clip_list = "\n".join(
+                    f"  {i+1}. {c.title[:40]} ({c.duration:.1f}s)"
+                    for i, c in enumerate(clips)
+                )
+                await message.reply_text(
+                    f"✅ Downloaded {len(clips)} clip(s):\n{clip_list}\n\n"
+                    "🔍 Scanning for AI glitches...",
+                )
+
+            # Fix AI glitches in each clip
+            if action.params.get("fix_glitches", True):
+                for i, clip in enumerate(clips):
+                    glitches = detect_all_glitches(clip.path)
+                    if glitches:
+                        fixed_path = str(Path(clip.path).parent / f"fixed_{i:03d}.mp4")
+                        replace_glitch_segments(clip.path, glitches, fixed_path, replacement="cut")
+                        clip.path = fixed_path
+                        if message:
+                            glitch_types = set()
+                            for g in glitches:
+                                glitch_types.update(g.reason.split("+"))
+                            await message.reply_text(
+                                f"🔧 Clip {i+1}: Fixed {len(glitches)} glitch(es) "
+                                f"({', '.join(glitch_types)})",
+                            )
+
+            if message:
+                await message.reply_text("🎬 Merging clips with transitions...")
+                await message.chat.send_action(ChatAction.UPLOAD_VIDEO)
+
+            # Merge clips with transitions
+            merged_output = str(WORK_DIR / f"merged_{len(clips)}clips.mp4")
+            add_transitions = action.params.get("add_transitions", True)
+            merge_downloaded_clips(
+                clips, merged_output,
+                add_transitions=add_transitions,
+                transition_style="cinematic",
+            )
+
+            current_path = merged_output
+            stem = Path(current_path).stem
+            ext = Path(current_path).suffix
+            video_duration = get_video_duration(current_path)
+
+            # Store as last video for further edits
+            if context:
+                context.user_data["last_video"] = current_path
+
+            if message:
+                await message.reply_text(
+                    f"✅ Merged! Total duration: {seconds_to_timecode(video_duration)}\n\n"
+                    "🎵 *Music options:*\n"
+                    "• Send me an audio file to use your own music\n"
+                    "• Say _\"add music\"_ and I'll pick something that fits\n"
+                    "• Or tell me a song/mood like _\"add upbeat music\"_",
+                    parse_mode="Markdown",
+                )
+
+        elif action.action == "smart_music":
+            if not current_path or not Path(current_path).exists():
+                if message:
+                    await message.reply_text(
+                        "I need a video first to add music to! "
+                        "Send a video or paste links first."
+                    )
+                return current_path
+
+            if message:
+                suggestion = analyze_video_mood(current_path)
+                await message.reply_text(
+                    f"🎵 Analyzing video mood...\n"
+                    f"Detected: *{suggestion.mood}* ({suggestion.reason})\n"
+                    f"Adding {suggestion.genre} background music...",
+                    parse_mode="Markdown",
+                )
+                await message.chat.send_action(ChatAction.UPLOAD_VIDEO)
+
+            output = str(WORK_DIR / f"{stem}_smartmusic{ext}")
+            user_music = None
+            music_files = list_music()
+            if music_files:
+                user_music = music_files[0].path
+
+            add_smart_music(current_path, output, user_music_path=user_music)
+            current_path = output
+            video_duration = get_video_duration(current_path)
+
+        elif action.action == "ask_music":
+            if message:
+                await message.reply_text(
+                    "🎵 *Upload your music!*\n\n"
+                    "Send me an audio file (MP3, WAV, etc.) with the caption:\n"
+                    "`music: Song Name`\n\n"
+                    "Then say _\"add music\"_ and I'll add it to your video.",
+                    parse_mode="Markdown",
                 )
 
         elif action.action == "auto_edit":
