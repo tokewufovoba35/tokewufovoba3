@@ -272,12 +272,14 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
 
     await message.reply_text(
-        f"📹 Video saved ({file_size_mb:.1f} MB, {seconds_to_timecode(duration)})\n\n"
-        f"Now tell me what to do! Examples:\n"
-        f'• _"Make this into a TikTok clip"_\n'
-        f'• _"Add cinematic color and slow mo"_\n'
-        f'• _"Clip the best moments"_\n'
-        f'• _"Trim 0:10 to 0:30"_',
+        f"Got it! ({file_size_mb:.1f} MB, {seconds_to_timecode(duration)})\n\n"
+        f"What do you want me to do with it? Just tell me naturally — for example:\n"
+        f'• _"edit this"_\n'
+        f'• _"make it look cinematic"_\n'
+        f'• _"remove silence and add transitions"_\n'
+        f'• _"make it into a TikTok"_\n'
+        f'• _"trim the first 10 seconds"_\n\n'
+        f"Or literally anything else — I'll figure it out!",
         parse_mode="Markdown",
     )
 
@@ -365,7 +367,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if not video_path or not Path(video_path).exists():
         await message.reply_text(
-            "📹 No video found. Send me a video first, then tell me how to edit it!"
+            "Hey! Send me a video first and then tell me what you want done. "
+            "I can handle pretty much anything — just describe it naturally!"
         )
         return
 
@@ -419,10 +422,16 @@ async def execute_edit(message, context: ContextTypes.DEFAULT_TYPE,
             await message.reply_text("❌ Something went wrong — no output generated.")
 
     except TimeoutError:
-        await message.reply_text("⏰ Processing timed out. Try a shorter video or simpler edit.")
+        await message.reply_text(
+            "That took too long — try a shorter video or a simpler edit. "
+            "I work best with videos under 5 minutes!"
+        )
     except Exception as e:
         logger.error(f"Error processing: {e}", exc_info=True)
-        await message.reply_text(f"❌ Error: {str(e)}")
+        await message.reply_text(
+            "Something went wrong with that one. "
+            "Try again or describe what you want differently — I'll figure it out!"
+        )
 
 
 async def process_actions(actions: list[EditAction], video_path: str,
@@ -629,10 +638,15 @@ async def process_actions(actions: list[EditAction], video_path: str,
                 add_background_music(current_path, music.path, output)
                 current_path = output
             else:
-                raise ValueError(
-                    "No music in your library! Upload an audio file with caption "
-                    "`music: Song Name` first."
-                )
+                if message:
+                    await message.reply_text(
+                        "🎵 I don't have any music yet! Send me an audio file "
+                        "and I'll use it as background music.\n\n"
+                        "Just send an MP3/audio file with the caption:\n"
+                        "`music: Song Name`",
+                        parse_mode="Markdown",
+                    )
+                return current_path  # Skip this action gracefully
 
         elif action.action == "add_sfx":
             sfx_files = list_sfx()
@@ -642,10 +656,15 @@ async def process_actions(actions: list[EditAction], video_path: str,
                 add_sfx_at_time(current_path, sfx.path, output, timestamp=0.0)
                 current_path = output
             else:
-                raise ValueError(
-                    "No SFX in your library! Upload an audio file with caption "
-                    "`sfx: Effect Name` first."
-                )
+                if message:
+                    await message.reply_text(
+                        "🔊 No sound effects yet! Send me an audio file "
+                        "and I'll add it to your SFX library.\n\n"
+                        "Just send an MP3/audio file with the caption:\n"
+                        "`sfx: Effect Name`",
+                        parse_mode="Markdown",
+                    )
+                return current_path  # Skip this action gracefully
 
         elif action.action == "remove_silence":
             if message:

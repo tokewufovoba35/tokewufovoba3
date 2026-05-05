@@ -152,10 +152,13 @@ def parse_instruction(text: str) -> list[EditAction]:
             }))
 
     # Detect music/audio requests
-    if any(w in text_lower for w in ["music", "background music", "bgm", "song", "beat"]):
+    if any(w in text_lower for w in ["music", "background music", "bgm", "song", "beat",
+                                      "add music", "put music", "soundtrack",
+                                      "audio track", "backing track", "tune"]):
         actions.append(EditAction("add_music", {"source": "user_upload"}))
 
-    if any(w in text_lower for w in ["sfx", "sound effect", "sound effects"]):
+    if any(w in text_lower for w in ["sfx", "sound effect", "sound effects",
+                                      "whoosh", "swoosh", "ding", "pop sound"]):
         actions.append(EditAction("add_sfx", {"source": "user_upload"}))
 
     # Detect speed changes
@@ -211,7 +214,10 @@ def parse_instruction(text: str) -> list[EditAction]:
 
     # Detect silence removal
     if any(w in text_lower for w in ["remove silence", "cut silence", "no silence",
-                                      "remove dead air", "remove pauses", "cut pauses"]):
+                                      "remove dead air", "remove pauses", "cut pauses",
+                                      "dead air", "awkward pause", "clean up audio",
+                                      "remove the silence", "cut the silence",
+                                      "remove gaps", "cut gaps"]):
         actions.append(EditAction("remove_silence", {}))
 
     # Detect transition requests
@@ -255,10 +261,22 @@ def parse_instruction(text: str) -> list[EditAction]:
 
     # If no specific actions detected, try to infer from context
     if not actions:
-        if any(w in text_lower for w in ["edit", "make it better", "enhance", "improve"]):
+        # Broad catch-all: anything that sounds like an editing request
+        edit_indicators = [
+            "edit", "make it", "make this", "can you", "could you",
+            "i want", "i need", "please", "do", "fix", "change",
+            "better", "enhance", "improve", "help", "clean",
+            "professional", "nice", "good", "awesome", "fire",
+            "polish", "touch up", "finalize", "finish",
+            "prepare", "get it ready", "make it look",
+            "production", "post", "upload ready",
+        ]
+        if any(w in text_lower for w in edit_indicators):
             actions.append(EditAction("auto_edit", {"raw_text": text}))
         else:
-            actions.append(EditAction("unknown", {"raw_text": text}))
+            # Even for truly unknown input, default to auto_edit rather than error
+            # The user sent a video + text — they clearly want something done
+            actions.append(EditAction("auto_edit", {"raw_text": text}))
 
     return actions
 
@@ -315,6 +333,4 @@ def describe_actions(actions: list[EditAction]) -> str:
             descriptions.append(f"Insert B-roll: {action.params.get('query', '')}")
         elif action.action == "auto_edit":
             descriptions.append("Full auto-edit (silence removal → color → music → graphics)")
-        elif action.action == "unknown":
-            descriptions.append("(Could not parse instruction — please be more specific)")
     return "\n".join(f"• {d}" for d in descriptions)
