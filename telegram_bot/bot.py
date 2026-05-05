@@ -24,6 +24,16 @@ import subprocess
 import shutil
 from pathlib import Path
 
+# Ensure ffmpeg is available — use imageio-ffmpeg bundled binary as fallback
+if not shutil.which("ffmpeg"):
+    try:
+        import imageio_ffmpeg
+        _ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+        _ffmpeg_dir = str(Path(_ffmpeg_path).parent)
+        os.environ["PATH"] = _ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+    except ImportError:
+        pass
+
 from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import (
