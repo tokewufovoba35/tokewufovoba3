@@ -40,14 +40,12 @@ EFFECT_KEYWORDS = {
     "fade in": "fade_in",
     "fade out": "fade_out",
     "fade": "fade_in_out",
-    "transition": "transition",
-    "crossfade": "crossfade",
+
     "glitch": "glitch",
     "shake": "shake",
     "flash": "flash",
     "blur": "blur",
     "vignette": "vignette",
-    "cinematic": "cinematic",
     "film grain": "film_grain",
     "grain": "film_grain",
     "letterbox": "letterbox",
@@ -211,10 +209,54 @@ def parse_instruction(text: str) -> list[EditAction]:
     if rot_match:
         actions.append(EditAction("rotate", {"degrees": int(rot_match.group(1))}))
 
+    # Detect silence removal
+    if any(w in text_lower for w in ["remove silence", "cut silence", "no silence",
+                                      "remove dead air", "remove pauses", "cut pauses"]):
+        actions.append(EditAction("remove_silence", {}))
+
+    # Detect transition requests
+    if any(w in text_lower for w in ["transition", "transitions", "crossfade"]):
+        style = "smooth"
+        for s in ["dynamic", "cinematic", "energetic", "minimal", "creative"]:
+            if s in text_lower:
+                style = s
+                break
+        if not any(a.action == "add_transitions" for a in actions):
+            actions.append(EditAction("add_transitions", {"style": style}))
+
+    # Detect intro/outro
+    if any(w in text_lower for w in ["intro", "title card", "opening"]):
+        actions.append(EditAction("add_intro", {}))
+    if any(w in text_lower for w in ["outro", "end screen", "end card"]):
+        actions.append(EditAction("add_end_screen", {}))
+
+    # Detect lower third
+    lower_match = re.search(r'lower third[:\s]*["\']?(.+?)["\']?$', text_lower)
+    if lower_match:
+        actions.append(EditAction("lower_third", {"name": lower_match.group(1)}))
+
+    # Detect subscribe/CTA overlay
+    if any(w in text_lower for w in ["subscribe", "cta", "call to action"]):
+        actions.append(EditAction("subscribe_overlay", {}))
+
+    # Detect stock footage/B-roll
+    if any(w in text_lower for w in ["b-roll", "broll", "b roll", "stock footage",
+                                      "stock video", "cutaway"]):
+        query_match = re.search(r'(?:b-?roll|stock (?:footage|video)|cutaway)\s+(?:of\s+)?["\']?(.+?)["\']?$', text_lower)
+        query = query_match.group(1) if query_match else "generic"
+        actions.append(EditAction("add_broll", {"query": query}))
+
+    # Detect full auto-edit ("edit this", "full edit", "edit like a pro")
+    if any(w in text_lower for w in ["full edit", "edit this", "edit it",
+                                      "edit like a pro", "auto edit", "auto-edit",
+                                      "professional edit", "do everything"]):
+        if not any(a.action == "auto_edit" for a in actions):
+            actions.append(EditAction("auto_edit", {"raw_text": text}))
+
     # If no specific actions detected, try to infer from context
     if not actions:
         if any(w in text_lower for w in ["edit", "make it better", "enhance", "improve"]):
-            actions.append(EditAction("enhance", {}))
+            actions.append(EditAction("auto_edit", {"raw_text": text}))
         else:
             actions.append(EditAction("unknown", {"raw_text": text}))
 
@@ -257,6 +299,22 @@ def describe_actions(actions: list[EditAction]) -> str:
             descriptions.append(f"Rotate {action.params['degrees']}°")
         elif action.action == "enhance":
             descriptions.append("Auto-enhance (stabilize, color correct, denoise)")
+        elif action.action == "remove_silence":
+            descriptions.append("Remove silence/dead air")
+        elif action.action == "add_transitions":
+            descriptions.append(f"Add {action.params.get('style', 'smooth')} transitions")
+        elif action.action == "add_intro":
+            descriptions.append("Add animated intro")
+        elif action.action == "add_end_screen":
+            descriptions.append("Add end screen")
+        elif action.action == "lower_third":
+            descriptions.append(f"Add lower third: {action.params.get('name', '')}")
+        elif action.action == "subscribe_overlay":
+            descriptions.append("Add subscribe/CTA overlay")
+        elif action.action == "add_broll":
+            descriptions.append(f"Insert B-roll: {action.params.get('query', '')}")
+        elif action.action == "auto_edit":
+            descriptions.append("Full auto-edit (silence removal → color → music → graphics)")
         elif action.action == "unknown":
             descriptions.append("(Could not parse instruction — please be more specific)")
     return "\n".join(f"• {d}" for d in descriptions)

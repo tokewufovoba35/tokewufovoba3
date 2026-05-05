@@ -50,6 +50,13 @@ from modules.audio import (
     save_music, save_sfx, list_music, list_sfx,
     MUSIC_DIR, SFX_DIR,
 )
+from modules.silence import remove_silence
+from modules.transitions import join_segments_with_transitions
+from modules.graphics import (
+    add_animated_intro, add_lower_third, add_subscribe_overlay,
+    add_end_screen, add_progress_bar,
+)
+from modules.auto_edit import auto_edit, parse_auto_edit_config, EditConfig
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -104,50 +111,55 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Full help."""
     await update.message.reply_text(
         "*📖 Full Feature List*\n\n"
+        "*🤖 Auto-Edit (Pro Editor):*\n"
+        '• `edit this` — Full auto-edit pipeline\n'
+        '• `edit this for TikTok` — Auto-edit + format\n'
+        "  _Removes silence → color grades → adds music → transitions → graphics_\n\n"
+        "*🔇 Silence Removal:*\n"
+        "• `remove silence` — Cut all dead air/pauses\n"
+        "• `cut pauses` — Same as above\n\n"
         "*✂️ Trimming & Clipping:*\n"
         '• `trim 0:10 to 0:30` — Cut a segment\n'
         '• `clip the highlights` — Auto-find best moments\n'
         '• `make TikTok clips` — Auto-clip for TikTok (60s, 9:16)\n\n'
+        "*🔄 Transitions:*\n"
+        "• `add transitions` — Smooth transitions between cuts\n"
+        "• `add cinematic transitions` — Cinematic style\n"
+        "• `add energetic transitions` — Fast/dynamic style\n\n"
         "*🎨 Effects:*\n"
         "• `zoom in` / `zoom out` — Ken Burns effect\n"
         "• `slow motion` — 0.5x speed\n"
         "• `speed 2x` — Speed up\n"
-        "• `speed ramp` — Dynamic speed changes\n"
         "• `fade in` / `fade out` — Fades\n"
-        "• `glitch` — Glitch/datamosh\n"
-        "• `shake` — Camera shake\n"
-        "• `film grain` — Analog look\n"
-        "• `letterbox` — Cinematic bars\n"
-        "• `vignette` — Dark edges\n"
-        "• `blur` — Gaussian blur\n\n"
+        "• `glitch` / `shake` / `film grain` / `vignette`\n"
+        "• `letterbox` / `blur`\n\n"
         "*🎨 Color Grading:*\n"
         "• `warm` / `cool` / `vintage` / `cinematic`\n"
         "• `moody` / `dramatic` / `neon` / `pastel`\n"
-        "• `black and white` / `sepia`\n"
-        "• `high contrast` / `saturated`\n\n"
+        "• `black and white` / `sepia` / `high contrast`\n\n"
         "*🎵 Audio:*\n"
         '• `add background music` — Uses your uploaded music\n'
         '• `add sfx` — Add sound effects\n'
-        '• `mute` — Remove all audio\n'
-        '• `extract audio` — Get audio as MP3\n\n'
+        '• `mute` — Remove audio\n\n'
+        "*🎬 Motion Graphics:*\n"
+        "• `add intro` — Animated title card\n"
+        "• `add end screen` — Outro with text\n"
+        "• `add subscribe overlay` — CTA button\n"
+        '• `lower third: Your Name` — Name bar\n\n'
         "*📱 Platform Formatting:*\n"
-        "• `for TikTok` — 9:16, 1080x1920, max 60s\n"
-        "• `for YouTube Shorts` — 9:16, max 60s\n"
-        "• `for Instagram Reels` — 9:16, max 90s\n"
-        "• `for YouTube` — 16:9, 1920x1080\n\n"
-        "*📝 Text:*\n"
-        '• `add text "Your text here"` — Text overlay\n'
-        "• `add captions` — Auto-generate subtitles\n\n"
+        "• `for TikTok` / `for YouTube Shorts` / `for Reels`\n\n"
+        "*🎞️ Stock Footage (needs Pexels API key):*\n"
+        '• `add b-roll of nature` — Insert stock footage\n'
+        '• `stock footage of technology` — Search & insert\n\n'
         "*🔧 Utilities:*\n"
-        "• `compress` — Reduce file size\n"
-        "• `resize 720p` — Scale resolution\n"
-        "• `rotate 90` — Rotate\n"
-        "• `reverse` — Play backwards\n"
-        "• `enhance` — Auto-improve quality\n\n"
-        "*💡 Tips:*\n"
-        "• Combine commands! _\"cinematic color with zoom and slow mo for TikTok\"_\n"
-        "• Upload music: send audio with caption `music: Song Name`\n"
-        "• Upload SFX: send audio with caption `sfx: Effect Name`",
+        "• `compress` / `resize 720p` / `rotate 90`\n"
+        "• `reverse` / `enhance`\n\n"
+        "*💡 Pro Tips:*\n"
+        "• Just say `edit this` for a full professional edit!\n"
+        "• Combine: _\"remove silence, add transitions, cinematic color, for TikTok\"_\n"
+        "• Upload music with caption `music: Song Name`\n"
+        "• Upload SFX with caption `sfx: Whoosh`\n"
+        "• Each edit builds on the last — chain multiple edits!",
         parse_mode="Markdown",
     )
 
@@ -622,10 +634,101 @@ async def process_actions(actions: list[EditAction], video_path: str,
                     "`sfx: Effect Name` first."
                 )
 
+        elif action.action == "remove_silence":
+            output = str(WORK_DIR / f"{stem}_desilenced{ext}")
+            remove_silence(current_path, output)
+            current_path = output
+            video_duration = get_video_duration(current_path)
+
+        elif action.action == "add_transitions":
+            # Transitions are applied during auto-edit or after silence removal
+            # For standalone, we split on scenes and add transitions
+            from modules.clipper import detect_scenes
+            scenes = detect_scenes(current_path)
+            if scenes and len(scenes) >= 2:
+                # Split at scene points and rejoin with transitions
+                segments = []
+                prev = 0.0
+                for sc in scenes[:10]:  # Limit to 10 scenes
+                    seg_path = str(WORK_DIR / f"{stem}_tseg_{len(segments)}{ext}")
+                    result = run_ffmpeg(["-i", current_path, "-ss", str(prev),
+                                        "-to", str(sc), "-c", "copy", seg_path])
+                    if result.returncode == 0:
+                        segments.append(seg_path)
+                    prev = sc
+                # Last segment
+                seg_path = str(WORK_DIR / f"{stem}_tseg_{len(segments)}{ext}")
+                result = run_ffmpeg(["-i", current_path, "-ss", str(prev),
+                                    "-c", "copy", seg_path])
+                if result.returncode == 0:
+                    segments.append(seg_path)
+
+                if len(segments) > 1:
+                    output = str(WORK_DIR / f"{stem}_transitions{ext}")
+                    style = action.params.get("style", "smooth")
+                    join_segments_with_transitions(segments, output, style=style)
+                    current_path = output
+                    video_duration = get_video_duration(current_path)
+
+                # Clean up
+                for seg in segments:
+                    Path(seg).unlink(missing_ok=True)
+
+        elif action.action == "add_intro":
+            output = str(WORK_DIR / f"{stem}_intro{ext}")
+            title = context.user_data.get("intro_title", "")  if context else ""
+            add_animated_intro(current_path, output, title=title or "Video", style="fade")
+            current_path = output
+            video_duration = get_video_duration(current_path)
+
+        elif action.action == "add_end_screen":
+            output = str(WORK_DIR / f"{stem}_endscreen{ext}")
+            add_end_screen(current_path, output)
+            current_path = output
+
+        elif action.action == "lower_third":
+            output = str(WORK_DIR / f"{stem}_lt{ext}")
+            name = action.params.get("name", "")
+            add_lower_third(current_path, output, name=name)
+            current_path = output
+
+        elif action.action == "subscribe_overlay":
+            output = str(WORK_DIR / f"{stem}_sub{ext}")
+            add_subscribe_overlay(current_path, output)
+            current_path = output
+
+        elif action.action == "add_broll":
+            try:
+                from modules.stock import search_stock_videos, download_stock_video, insert_broll
+                query = action.params.get("query", "generic")
+                results = search_stock_videos(query, max_results=1)
+                if results:
+                    stock_path = download_stock_video(results[0])
+                    output = str(WORK_DIR / f"{stem}_broll{ext}")
+                    insert_broll(current_path, stock_path, output)
+                    current_path = output
+                    video_duration = get_video_duration(current_path)
+                else:
+                    raise ValueError(f"No stock footage found for '{query}'")
+            except (ImportError, ValueError, RuntimeError) as e:
+                raise ValueError(
+                    f"B-roll failed: {e}\n\n"
+                    "Make sure PEXELS_API_KEY is set and `requests` is installed.\n"
+                    "Get a free key at: https://www.pexels.com/api/"
+                )
+
+        elif action.action == "auto_edit":
+            config = parse_auto_edit_config(action.params.get("raw_text", ""))
+            output = str(WORK_DIR / f"{stem}_autoedit{ext}")
+            auto_edit(current_path, output, config=config)
+            current_path = output
+            video_duration = get_video_duration(current_path)
+
         elif action.action == "unknown":
             raise ValueError(
                 "I couldn't understand that instruction. Try something like:\n"
-                '• "trim 0:10 to 0:30"\n'
+                '• "edit this" — full auto-edit\n'
+                '• "remove silence and add transitions"\n'
                 '• "make it cinematic for TikTok"\n'
                 '• "add slow motion and zoom"\n'
                 '• "clip the highlights"\n\n'
