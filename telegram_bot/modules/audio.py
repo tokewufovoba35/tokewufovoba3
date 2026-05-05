@@ -27,28 +27,29 @@ SFX_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_audio_duration(audio_path: str) -> float:
     """Get duration of an audio file."""
-    import shutil
     import re
-    if shutil.which("ffprobe"):
+    try:
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=30,
         )
-        try:
-            return float(result.stdout.strip())
-        except ValueError:
-            pass
+        return float(result.stdout.strip())
+    except (ValueError, FileNotFoundError, OSError):
+        pass
 
     # Fallback: use ffmpeg
-    result = subprocess.run(
-        ["ffmpeg", "-i", audio_path, "-f", "null", "-"],
-        capture_output=True, text=True, timeout=30,
-    )
-    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", result.stderr)
-    if match:
-        h, m, s = float(match.group(1)), float(match.group(2)), float(match.group(3))
-        return h * 3600 + m * 60 + s
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-i", audio_path, "-f", "null", "-"],
+            capture_output=True, text=True, timeout=30,
+        )
+        match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", result.stderr)
+        if match:
+            h, m, s = float(match.group(1)), float(match.group(2)), float(match.group(3))
+            return h * 3600 + m * 60 + s
+    except (FileNotFoundError, OSError):
+        pass
     return 0.0
 
 

@@ -63,26 +63,28 @@ def add_animated_intro(video_path: str, output_path: str,
         )
 
     # Get video resolution
-    import shutil
+    import re as _re
     resolution = "1920x1080"
-    if shutil.which("ffprobe"):
+    try:
         probe = subprocess.run(
             ["ffprobe", "-v", "quiet", "-show_entries", "stream=width,height",
              "-of", "csv=p=0:s=x", video_path],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=15,
         )
         if probe.stdout.strip():
             resolution = probe.stdout.strip().split("\n")[0]
-    else:
+    except (FileNotFoundError, OSError):
         # Fallback: parse from ffmpeg
-        probe = subprocess.run(
-            ["ffmpeg", "-i", video_path],
-            capture_output=True, text=True,
-        )
-        import re
-        res_match = re.search(r"(\d{2,5})x(\d{2,5})", probe.stderr)
-        if res_match:
-            resolution = f"{res_match.group(1)}x{res_match.group(2)}"
+        try:
+            probe = subprocess.run(
+                ["ffmpeg", "-i", video_path],
+                capture_output=True, text=True,
+            )
+            res_match = _re.search(r"(\d{2,5})x(\d{2,5})", probe.stderr)
+            if res_match:
+                resolution = f"{res_match.group(1)}x{res_match.group(2)}"
+        except (FileNotFoundError, OSError):
+            pass
     w, h = resolution.split("x")[:2]
 
     # Generate intro clip
